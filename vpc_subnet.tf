@@ -6,7 +6,7 @@ resource "aws_vpc" "myVpc" {
   enable_dns_support = true
   tags = {
     Name = "myVpc"
-    Location = "Toronto-Canada"
+    Location = "Singapore"
   }
 }
 resource "aws_internet_gateway" "igw" {
@@ -94,7 +94,6 @@ resource "aws_security_group" "WebServerSG" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
-    #security_groups = ["${aws_security_group.elbSG.id}"]
   }
   #egress {
     #from_port   = 0
@@ -132,73 +131,53 @@ resource "aws_security_group" "PrivateServerSG" {
   }
 }
 resource "aws_elb" "myelb" {
-  name               = "my-classic-elb"
-  #count = "${length(data.aws_availability_zones.AZ.names)}"
-  availability_zones = "${data.aws_availability_zones.AZ.names}"
-  #subnets = "${aws_subnet.public_subnet.*.id}"
-  security_groups = "${aws_security_group.elbSG.*.id}"
+  name   = "my-classic-elb"
+  #count = "${length(aws_subnet.public_subnet)}"
+  #availability_zones = "${data.aws_availability_zones.AZ.names}"
+  subnets = "${aws_subnet.public_subnet.*.id}"
+  security_groups = ["${aws_security_group.elbSG.id}"]
   instances                   = "${aws_instance.MyPublicInstance.*.id}"
   cross_zone_load_balancing   = true
-  #include_public_dns_record   = "yes"
   idle_timeout                = 300
   connection_draining         = true
   connection_draining_timeout = 300
-  health_check {
-    target              = "HTTP:${var.server_port}/"
-    interval            = 5
-    timeout             = 3
-    healthy_threshold   = 2
-    unhealthy_threshold = 2
-  }
-  # This adds a listener for incoming HTTP requests.
+  depends_on                  = ["aws_internet_gateway.igw"]
+    # This adds a listener for incoming HTTP requests.
     listener {
     lb_port           = "${var.elb_port}"
     lb_protocol       = "http"
     instance_port     = "${var.server_port}"
     instance_protocol = "http"
   }
+  health_check {
+    target              = "HTTP:${var.server_port}/index.html"
+    interval            = 5
+    timeout             = 3
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+  }
 }
-#resource "aws_route53_zone" "amazoncloudonline" {
-    #name = "amazoncloudonline.net"
-#}
-resource "aws_route53_record" "alias" {
-     zone_id = "${aws_route53_zone.example.zone_id}"
-     name    = "amazoncloudonline.net"
+resource "aws_route53_zone" "example" {
+     name     = "terraformtest.net"
+     vpc_id   = "${aws_vpc.myVpc.id}"
+}
+resource "aws_route53_record" "example" {
+     allow_overwrite = true
+     zone_id  = "${aws_route53_zone.example.zone_id}"
+     name     = "elb.terraformtest.net"
      type     = "A"
 
      alias {
-      name                   = "${aws_elb.myelb.dns_name}"
+      name                   = "dualstack.${aws_elb.myelb.dns_name}"
       zone_id                = "${aws_elb.myelb.zone_id}"
       evaluate_target_health = true
            }
 }
-resource "aws_route53_zone" "example" {
-  name = "www.amazoncloudonline.net"
-}
-resource "aws_route53_record" "example" {
-      allow_overwrite = true
-      name            = "www.amazoncloudonline.net"
-      ttl             = 30
-      type            = "NS"
-      zone_id         = "${aws_route53_zone.example.zone_id}"
-
-records = [
-    "${aws_route53_zone.example.name_servers.0}",
-    "${aws_route53_zone.example.name_servers.1}",
-    "${aws_route53_zone.example.name_servers.2}",
-    "${aws_route53_zone.example.name_servers.3}",
-  ]
-}
-# Create a new load balancer attachment
-#resource "aws_elb_attachment" "elb-ec2" {
-    #elb      = "${aws_elb.myelb.id}"
-    #instances = "${aws_instance.MyPublicInstance.*.id}"
-#}
 resource "aws_instance" "MyPublicInstance" {
   count = "${length(data.aws_availability_zones.AZ.names)}"
   subnet_id = "${aws_subnet.public_subnet.*.id[count.index]}"
   vpc_security_group_ids = "${aws_security_group.WebServerSG.*.id}"
-  ami = "ami-0bf54ac1b628cf143"
+  ami = "ami-0cbc6aae997c6538a"
   instance_type = "t2.micro"
   associate_public_ip_address = true
   source_dest_check = false
@@ -206,7 +185,7 @@ resource "aws_instance" "MyPublicInstance" {
     Name = "MyWebServer : 10.0.${10+count.index}.0"
     Environment = "Operations"
   }
-  key_name = "ca-central-1-key-pair"
+  key_name = "ap-southeast-1-keypair"
   user_data = <<-EOF
                 #!/bin/bash
                 yum update -y
@@ -214,13 +193,14 @@ resource "aws_instance" "MyPublicInstance" {
                 systemctl start httpd.service
                 systemctl enable httpd.service
                 echo "<html><body><h1><b><i> Hello AWS Gurus, I am host $(hostname -f) with public identity $(curl -s http://169.254.169.254/latest/meta-data/public-hostname), public-ip of $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4), local-ip of $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4) and located in AZ $(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone) </i></b></h1></body></html>" > /var/www/html/index.html
+                nohup busybox httpd -f -p "${var.server_port}" &
                 EOF
 } 
 resource "aws_instance" "MyPrivateInstance" {
   count = "${length(data.aws_availability_zones.AZ.names)}"
   subnet_id = "${aws_subnet.private_subnet.*.id[count.index]}"
   vpc_security_group_ids = "${aws_security_group.PrivateServerSG.*.id}"
-  ami = "ami-0bf54ac1b628cf143"
+  ami = "ami-0cbc6aae997c6538a"
   instance_type = "t2.micro"
   associate_public_ip_address = false
   source_dest_check = false
@@ -228,5 +208,5 @@ resource "aws_instance" "MyPrivateInstance" {
     Name = "MyPrivateServer : 10.0.${20+count.index}.0"
     Environment = "Operations"
   }
-  key_name = "ca-central-1-key-pair"
+  key_name = "ap-southeast-1-keypair"
 }
