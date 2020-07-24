@@ -158,9 +158,6 @@ resource "aws_elb" "myelb" {
     instance_protocol = "http"
   }
 }
-#resource "aws_route53_zone" "amazoncloudonline" {
-    #name = "amazoncloudonline.net"
-#}
 resource "aws_route53_record" "alias" {
      zone_id = "${aws_route53_zone.example.zone_id}"
      name    = "amazoncloudonline.net"
